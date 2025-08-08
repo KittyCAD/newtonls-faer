@@ -105,8 +105,6 @@ pub enum Control {
     Cancel,
 }
 
-/* ---------- core Newton loop with callback ---------- */
-
 fn newton_iterate<M, F, Cb>(
     model: &mut M,
     x: &mut [M::Real],

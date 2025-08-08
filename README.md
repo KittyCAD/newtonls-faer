@@ -104,3 +104,8 @@ while let Ok(st) = rx.recv() {
 - Preallocated buffers and in-place solves avoid per-iteration allocations.
 - Threading: pick one level of parallelism—inside LU or over cases—to avoid oversubscription.
 - Ordering (AMD/ND/…) can drastically reduce fill; we expose knobs for faer’s symbolic parameters if you want to tune.
+
+## Acknowledgments
+Big thanks to the [faer] team. newton-faer leans on faer’s fast, well-designed sparse linear algebra.
+
+[faer]: https://github.com/sarah-quinones/faer-rs

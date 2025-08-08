@@ -122,3 +122,118 @@ pub fn current_parallelism() -> usize {
         .copied()
         .unwrap_or_else(rayon::current_num_threads)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use faer::sparse::Pair;
+    use faer::sparse::SymbolicSparseColMat;
+
+    #[derive(Clone)]
+    struct TwoVarLayout;
+    impl RowMap for TwoVarLayout {
+        type Var = ();
+        fn dim(&self) -> usize {
+            2
+        }
+        fn row(&self, _bus: usize, _var: Self::Var) -> Option<usize> {
+            None
+        }
+    }
+
+    #[derive(Clone)]
+    struct Jc {
+        sym: SymbolicSparseColMat<usize>,
+        vals: Vec<f64>,
+    }
+    impl JacobianCache<f64> for Jc {
+        fn symbolic(&self) -> &SymbolicSparseColMat<usize> {
+            &self.sym
+        }
+        fn values(&self) -> &[f64] {
+            &self.vals
+        }
+        fn values_mut(&mut self) -> &mut [f64] {
+            &mut self.vals
+        }
+    }
+
+    struct Model {
+        layout: TwoVarLayout,
+        jac: Jc,
+    }
+
+    impl Model {
+        fn new() -> Self {
+            let pairs = vec![
+                Pair { row: 0, col: 0 },
+                Pair { row: 1, col: 0 },
+                Pair { row: 0, col: 1 },
+                Pair { row: 1, col: 1 },
+            ];
+            let (sym, _argsort) = SymbolicSparseColMat::try_new_from_indices(2, 2, &pairs).unwrap();
+            let nnz = sym.col_ptr()[sym.ncols()];
+            Self {
+                layout: TwoVarLayout,
+                jac: Jc {
+                    sym,
+                    vals: vec![0.0; nnz],
+                },
+            }
+        }
+    }
+
+    impl NonlinearSystem for Model {
+        type Real = f64;
+        type Layout = TwoVarLayout;
+
+        fn layout(&self) -> &Self::Layout {
+            &self.layout
+        }
+
+        fn jacobian(&self) -> &dyn JacobianCache<Self::Real> {
+            &self.jac
+        }
+        fn jacobian_mut(&mut self) -> &mut dyn JacobianCache<Self::Real> {
+            &mut self.jac
+        }
+
+        fn residual(&self, x: &[Self::Real], out: &mut [Self::Real]) {
+            let (xx, yy) = (x[0], x[1]);
+            out[0] = xx + yy - 3.0;
+            out[1] = xx * xx + yy - 3.0;
+        }
+
+        fn refresh_jacobian(&mut self, x: &[Self::Real]) {
+            let xx = x[0];
+            let v = self.jac.values_mut();
+            v[0] = 1.0;
+            v[1] = 2.0 * xx;
+            v[2] = 1.0;
+            v[3] = 1.0;
+        }
+    }
+
+    #[test]
+    fn solves_two_equations_sparse() {
+        let cfg = NewtonCfg::<f64>::sparse()
+            .with_adaptive(true)
+            .with_threads(1);
+
+        let mut model = Model::new();
+        let mut x = [0.9_f64, 2.1_f64];
+
+        let iters = crate::solve_sparse_cb(
+            &mut model,
+            &mut x,
+            &mut crate::FaerLu::<f64>::default(),
+            cfg,
+            |_| Control::Continue,
+        )
+        .expect("solver");
+
+        assert!(iters > 0 && iters <= 25);
+        assert!((x[0] - 1.0).abs() < 1e-10);
+        assert!((x[1] - 2.0).abs() < 1e-10);
+    }
+}
