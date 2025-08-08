@@ -108,7 +108,7 @@ Parallelism is a policy choice: inside LU for one/few huge systems, or over case
 
 ```rust
 use rayon::prelude::*;
-use crate::solver::NewtonCfg;
+use newton_faer::NewtonCfg;
 
 // batch mode: many cases, maximize throughput
 let cfg_batch = NewtonCfg::<f64>::default().with_threads(1); // LU single-thread
@@ -162,7 +162,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, mpsc,
 };
-use crate::solver::{Control, IterationStats};
+use newton_faer::{Control, IterationStats};
 
 let (tx, rx) = mpsc::channel::<IterationStats<f64>>();
 let cancel = Arc::new(AtomicBool::new(false));
