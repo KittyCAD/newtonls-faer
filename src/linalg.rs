@@ -165,6 +165,7 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
             )
         };
 
+        // TODO: Performance?
         // Since the underlying solver is in-place, we first copy the rhs data
         // into the output buffer.
         out.copy_from(rhs);
@@ -290,7 +291,6 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, Mat<T>> for DenseLu<T> {
         Ok(())
     }
 
-    // This is the updated method
     fn solve_into(&mut self, rhs: MatRef<T>, mut out: MatMut<T>) -> SolverResult<()> {
         let lu = self
             .lu
