@@ -1,12 +1,10 @@
 use super::{ComplexField, LinearSolver, Mat, SolverError, SolverResult};
 use dyn_stack::{MemBuffer, MemStack};
-use error_stack::Report;
 use error_stack::ResultExt;
-use faer::linalg::solvers::ShapeCore;
 use faer::{
     Conj, Par,
     linalg::solvers::FullPivLu,
-    mat::{MatMut, MatRef},
+    mat::MatMut,
     prelude::{Solve, SolveLstsq},
     sparse::{
         SparseColMatRef,
@@ -147,7 +145,7 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
         Ok(())
     }
 
-    fn solve_into(&mut self, rhs: MatRef<T>, mut out: MatMut<T>) -> SolverResult<()> {
+    fn solve_in_place(&mut self, mut rhs: MatMut<T>) -> SolverResult<()> {
         let mut stack = MemStack::new(
             self.scratch
                 .as_mut()
@@ -165,14 +163,8 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
             )
         };
 
-        // TODO: Performance?
-        // Since the underlying solver is in-place, we first copy the rhs data
-        // into the output buffer.
-        out.copy_from(rhs);
-
-        // Then we solve in-place, modifying `out`` to contain the solution.
-        lu_ref.solve_in_place_with_conj(Conj::No, out.as_mut(), Par::rayon(0), &mut stack);
-
+        // LU is naturally in-place.
+        lu_ref.solve_in_place_with_conj(Conj::No, rhs.as_mut(), Par::rayon(0), &mut stack);
         Ok(())
     }
 }
@@ -234,43 +226,15 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
         Ok(())
     }
 
-    fn solve_into(&mut self, rhs: MatRef<T>, mut out: MatMut<T>) -> SolverResult<()> {
+    fn solve_in_place(&mut self, mut rhs: MatMut<T>) -> SolverResult<()> {
         let qr = self
             .qr
             .as_ref()
             .ok_or(SolverError)
             .attach_printable("QR factorization not available for solve")?;
 
-        // For QR least squares, the input and output dimensions may be different.
-        // rhs is n_residuals × n_rhs_cols
-        // out: should be able to hold at least n_variables × n_rhs_cols;
-        //      QR expects to work with an n_residuals × n_rhs_cols buffer
-
-        // Check dimensions are compatible.
-        if out.nrows() < qr.ncols() || out.ncols() != rhs.ncols() {
-            return Err(Report::new(SolverError)
-                .attach_printable("Output buffer too small for QR solution"));
-        }
-
-        // We need to work in a larger buffer and copy the result back.
-        if out.nrows() == rhs.nrows() {
-            // Square system; can work directly.
-            out.copy_from(rhs);
-            qr.solve_lstsq_in_place(out.as_mut());
-        } else {
-            // Non-square system; use temporary buffer.
-            let mut work = faer::mat::Mat::zeros(rhs.nrows(), rhs.ncols());
-            work.copy_from(rhs);
-            qr.solve_lstsq_in_place(work.as_mut());
-
-            // Copy solution (first n_variables rows) back to output.
-            for j in 0..out.ncols() {
-                for i in 0..out.nrows() {
-                    out[(i, j)] = work[(i, j)].clone();
-                }
-            }
-        }
-
+        // Least-squares: faer writes the solution into the top ncols(A) rows of `rhs`.
+        qr.solve_lstsq_in_place(rhs.as_mut());
         Ok(())
     }
 }
@@ -291,19 +255,16 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, Mat<T>> for DenseLu<T> {
         Ok(())
     }
 
-    fn solve_into(&mut self, rhs: MatRef<T>, mut out: MatMut<T>) -> SolverResult<()> {
+    fn solve_in_place(&mut self, mut rhs: MatMut<T>) -> SolverResult<()> {
         let lu = self
             .lu
             .as_ref()
             .ok_or(SolverError)
             .attach_printable("Dense LU not factorized")?;
 
-        // `lu.solve` returns a new matrix with the solution.
-        let solution = lu.solve(rhs);
-
-        // We copy the solution into the provided output buffer.
-        out.copy_from(&solution);
-
+        // FullPivLu returns a new matrix; copy the result back into `rhs` to keep in-place.
+        let solution = lu.solve(rhs.as_ref());
+        rhs.copy_from(&solution);
         Ok(())
     }
 }

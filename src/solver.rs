@@ -315,15 +315,19 @@ where
                 .zip(f.iter())
                 .for_each(|(dst, &src)| *dst = -src);
 
-            // For QR least squares, we need a working buffer that can hold the residuals.
-            // The QR solver will put the solution in the first n_vars rows.
-            let mut qr_work = FaerMat::<M::Real>::zeros(n_res, 1);
-            qr_work.copy_from(rhs.as_ref());
+            // rhs is n_residuals x 1; smash -f in there.
+            rhs.col_mut(0)
+                .as_mut()
+                .iter_mut()
+                .zip(f.iter())
+                .for_each(|(dst, &src)| *dst = -src);
 
-            lin.solve_into(rhs.as_ref(), qr_work.as_mut())?;
+            // In-place solve.
+            // For QR least-squares, the top n_vars rows now contain the solution.
+            lin.solve_in_place(rhs.as_mut())?;
 
-            // Copy solution back to dx slice (first n_vars rows contain the solution).
-            for (i, &val) in qr_work.col(0).iter().take(n_vars).enumerate() {
+            // Chop those top rows out and copy into dx.
+            for (i, &val) in rhs.col(0).iter().take(n_vars).enumerate() {
                 dx[i] = val;
             }
 
@@ -349,7 +353,7 @@ where
     let n_vars = model.layout().n_variables();
     let mut jac = FaerMat::<M::Real>::zeros(n_vars, n_vars);
     let mut rhs = FaerMat::<M::Real>::zeros(n_vars, 1);
-    let mut sol = FaerMat::<M::Real>::zeros(n_vars, 1);
+    // let mut sol = FaerMat::<M::Real>::zeros(n_vars, 1);
 
     newton_iterate(
         model,
@@ -362,10 +366,15 @@ where
                 rhs[(i, 0)] = -fi;
             }
 
-            lu.solve_into(rhs.as_ref(), sol.as_mut())?;
+            // rhs is n_vars x 1.
+            for (i, &fi) in f.iter().enumerate() {
+                rhs[(i, 0)] = -fi;
+            }
 
-            // Copy solution back to dx slice.
-            for (i, &val) in sol.col(0).iter().enumerate() {
+            lu.solve_in_place(rhs.as_mut())?;
+
+            // Copy back to dx.
+            for (i, &val) in rhs.col(0).iter().enumerate() {
                 dx[i] = val;
             }
 
