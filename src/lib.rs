@@ -555,4 +555,139 @@ mod tests {
             x[2]
         );
     }
+
+    #[test]
+    fn solves_simple_circle_line_system() {
+        // Equivalent test exists in geometric constraint playground.
+        // System: x^2 + y^2 = 1 (circle), x - y = 0 (line)
+        struct SimpleLayout;
+        impl RowMap for SimpleLayout {
+            type Var = ();
+            fn n_variables(&self) -> usize {
+                2
+            }
+            fn n_residuals(&self) -> usize {
+                2
+            }
+            fn row(&self, _bus: usize, _var: Self::Var) -> Option<usize> {
+                None
+            }
+        }
+
+        #[derive(Clone)]
+        struct SimpleJc {
+            sym: SymbolicSparseColMat<usize>,
+            vals: Vec<f64>,
+        }
+        impl JacobianCache<f64> for SimpleJc {
+            fn symbolic(&self) -> &SymbolicSparseColMat<usize> {
+                &self.sym
+            }
+            fn values(&self) -> &[f64] {
+                &self.vals
+            }
+            fn values_mut(&mut self) -> &mut [f64] {
+                &mut self.vals
+            }
+        }
+
+        struct SimpleSystem {
+            layout: SimpleLayout,
+            jac: SimpleJc,
+        }
+
+        impl SimpleSystem {
+            fn new() -> Self {
+                let pairs = vec![
+                    faer::sparse::Pair { row: 0, col: 0 },
+                    faer::sparse::Pair { row: 1, col: 0 },
+                    faer::sparse::Pair { row: 0, col: 1 },
+                    faer::sparse::Pair { row: 1, col: 1 },
+                ];
+                let (sym, _) = SymbolicSparseColMat::try_new_from_indices(2, 2, &pairs).unwrap();
+                let nnz = sym.col_ptr()[sym.ncols()];
+                Self {
+                    layout: SimpleLayout,
+                    jac: SimpleJc {
+                        sym,
+                        vals: vec![0.0; nnz],
+                    },
+                }
+            }
+        }
+
+        impl NonlinearSystem for SimpleSystem {
+            type Real = f64;
+            type Layout = SimpleLayout;
+
+            fn layout(&self) -> &Self::Layout {
+                &self.layout
+            }
+            fn jacobian(&self) -> &dyn JacobianCache<Self::Real> {
+                &self.jac
+            }
+            fn jacobian_mut(&mut self) -> &mut dyn JacobianCache<Self::Real> {
+                &mut self.jac
+            }
+            fn residual(&self, x: &[Self::Real], out: &mut [Self::Real]) {
+                out[0] = x[0] * x[0] + x[1] * x[1] - 1.0;
+                out[1] = x[0] - x[1];
+            }
+            fn refresh_jacobian(&mut self, x: &[Self::Real]) {
+                let v = self.jac.values_mut();
+                // d(r0)/dx = 2x
+                // d(r1)/dx = 1
+                // d(r0)/dy = 2y
+                // d(r1)/dy = -1
+                v[0] = 2.0 * x[0];
+                v[1] = 1.0;
+                v[2] = 2.0 * x[1];
+                v[3] = -1.0;
+            }
+        }
+
+        let mut system = SimpleSystem::new();
+        let mut x = [0.5_f64, 0.5_f64]; // Initial guess
+
+        let cfg = NewtonCfg::<f64>::sparse()
+            .with_adaptive(true)
+            .with_threads(1);
+
+        let callback = |stats: &IterationStats<f64>| {
+            println!(
+                "Iteration {}: residual = {:.2e}, damping = {:.3}",
+                stats.iter, stats.residual, stats.damping
+            );
+            Control::Continue
+        };
+
+        let result = crate::solve_cb(&mut system, &mut x, cfg, callback);
+
+        assert!(result.is_ok(), "Solver failed: {:?}", result);
+        let iters = result.unwrap();
+        assert!(iters > 0 && iters <= 25);
+
+        // The solution should be close to [0.7071, 0.7071].
+        let expected = 0.70710678;
+        let tol = 1e-8;
+        assert!(
+            (x[0] - expected).abs() < tol,
+            "x[0] = {}, expected {}",
+            x[0],
+            expected
+        );
+        assert!(
+            (x[1] - expected).abs() < tol,
+            "x[1] = {}, expected {}",
+            x[1],
+            expected
+        );
+
+        // Print final result and residuals.
+        println!("Converged in {} iterations", iters);
+        println!("Solution: x = {:?}", x);
+        let mut res = [0.0; 2];
+        system.residual(&x, &mut res);
+        println!("Residual: {:?}", res);
+    }
 }
