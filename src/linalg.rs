@@ -1,13 +1,18 @@
 use super::{ComplexField, LinearSolver, Mat, SolverError, SolverResult};
 use dyn_stack::{MemBuffer, MemStack};
 use error_stack::ResultExt;
+// use faer::sparse::linalg::qr::{QrRef, QrSymbolicParams, SymbolicQr, factorize_symbolic_qr};
 use faer::{
-    Conj, Par,
+    Conj,
+    Par,
+    // linalg::solvers::{FullPivLu, Qr},
     linalg::solvers::FullPivLu,
+    mat::{MatMut, MatRef},
     prelude::Solve,
     sparse::{
         SparseColMatRef,
         linalg::lu::{LuRef, LuSymbolicParams, NumericLu, SymbolicLu, factorize_symbolic_lu},
+        // linalg::qr::{QrRef, QrSymbolicParams, SymbolicQr, factorize_symbolic_qr},
     },
 };
 
@@ -143,7 +148,7 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
         Ok(())
     }
 
-    fn solve_in_place(&mut self, rhs: &mut Mat<T>) -> SolverResult<()> {
+    fn solve_into(&mut self, rhs: MatRef<T>, mut out: MatMut<T>) -> SolverResult<()> {
         let mut stack = MemStack::new(
             self.scratch
                 .as_mut()
@@ -151,7 +156,7 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
                 .attach_printable("Scratch buffer not available for solve")?,
         );
 
-        unsafe {
+        let lu_ref = unsafe {
             LuRef::new_unchecked(
                 self.sym
                     .as_ref()
@@ -159,8 +164,14 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
                     .attach_printable("Symbolic factorization not available for solve")?,
                 &self.num,
             )
-        }
-        .solve_in_place_with_conj(Conj::No, rhs.as_mut(), Par::rayon(0), &mut stack);
+        };
+
+        // Since the underlying solver is in-place, we first copy the rhs data
+        // into the output buffer.
+        out.copy_from(rhs);
+
+        // Then we solve in-place, modifying `out` to contain the solution.
+        lu_ref.solve_in_place_with_conj(Conj::No, out.as_mut(), Par::rayon(0), &mut stack);
 
         Ok(())
     }
@@ -182,15 +193,20 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, Mat<T>> for DenseLu<T> {
         Ok(())
     }
 
-    fn solve_in_place(&mut self, rhs: &mut Mat<T>) -> SolverResult<()> {
+    // This is the updated method
+    fn solve_into(&mut self, rhs: MatRef<T>, mut out: MatMut<T>) -> SolverResult<()> {
         let lu = self
             .lu
             .as_ref()
             .ok_or(SolverError)
             .attach_printable("Dense LU not factorized")?;
 
-        let solution = lu.solve(rhs.as_ref());
-        rhs.copy_from(&solution);
+        // `lu.solve` returns a new matrix with the solution.
+        let solution = lu.solve(rhs);
+
+        // We copy the solution into the provided output buffer.
+        out.copy_from(&solution);
+
         Ok(())
     }
 }

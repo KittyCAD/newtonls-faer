@@ -12,6 +12,7 @@ pub use solver::{
 use core::fmt::{self, Display, Formatter};
 use core::num::NonZeroUsize;
 use faer::Mat;
+use faer::mat::{MatMut, MatRef};
 use faer::prelude::SparseColMatRef;
 use faer::sparse::SymbolicSparseColMat;
 use faer_traits::ComplexField;
@@ -69,7 +70,7 @@ pub trait NonlinearSystem {
 
 pub trait LinearSolver<T: ComplexField<Real = T>, M> {
     fn factor(&mut self, a: &M) -> SolverResult<()>;
-    fn solve_in_place(&mut self, rhs: &mut Mat<T>) -> SolverResult<()>;
+    fn solve_into(&mut self, rhs: MatRef<T>, out: MatMut<T>) -> SolverResult<()>;
 }
 
 pub trait JacobianCache<T /* Real */> {

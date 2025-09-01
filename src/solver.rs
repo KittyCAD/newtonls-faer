@@ -286,6 +286,7 @@ where
 {
     let n_vars = model.layout().n_variables();
     let mut rhs = FaerMat::<M::Real>::zeros(n_vars, 1);
+    let mut sol = FaerMat::<M::Real>::zeros(n_vars, 1);
 
     newton_iterate(
         model,
@@ -301,11 +302,13 @@ where
                 .zip(f.iter())
                 .for_each(|(dst, &src)| *dst = -src);
 
-            lin.solve_in_place(&mut rhs)?;
+            lin.solve_into(rhs.as_ref(), sol.as_mut())?;
 
-            for i in 0..n_vars {
-                dx[i] = rhs[(i, 0)];
+            // Copy solution back to dx slice.
+            for (i, &val) in sol.col(0).iter().enumerate() {
+                dx[i] = val;
             }
+
             Ok(())
         },
         on_iter,
@@ -328,6 +331,7 @@ where
     let n_vars = model.layout().n_variables();
     let mut jac = FaerMat::<M::Real>::zeros(n_vars, n_vars);
     let mut rhs = FaerMat::<M::Real>::zeros(n_vars, 1);
+    let mut sol = FaerMat::<M::Real>::zeros(n_vars, 1);
 
     newton_iterate(
         model,
@@ -339,10 +343,14 @@ where
             for (i, &fi) in f.iter().enumerate() {
                 rhs[(i, 0)] = -fi;
             }
-            lu.solve_in_place(&mut rhs)?;
-            for i in 0..n_vars {
-                dx[i] = rhs[(i, 0)];
+
+            lu.solve_into(rhs.as_ref(), sol.as_mut())?;
+
+            // Copy solution back to dx slice.
+            for (i, &val) in sol.col(0).iter().enumerate() {
+                dx[i] = val;
             }
+
             Ok(())
         },
         on_iter,
