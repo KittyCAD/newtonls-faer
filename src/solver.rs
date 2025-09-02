@@ -275,11 +275,11 @@ where
         let mut lu = DenseLu::<M::Real>::default();
         solve_dense_cb(model, x, &mut lu, cfg, NormType::LInf, on_iter)
     } else if n_vars == n_res {
-        // Square system: use LU factorisation.
+        // Square system: use LU factorization.
         let mut lu = FaerLu::<M::Real>::default();
         solve_sparse_cb(model, x, &mut lu, cfg, NormType::LInf, on_iter)
     } else {
-        // Non-square system: use QR factorisation for least squares.
+        // Non-square system: use QR factorization for least squares.
         let mut qr = SparseQr::<M::Real>::default();
         solve_sparse_cb(model, x, &mut qr, cfg, NormType::L2, on_iter)
     }

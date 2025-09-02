@@ -209,7 +209,7 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
             self.sig = Some(now);
         }
 
-        // Create the numeric QR factorization.
+        // Create the numeric QR factorization from a symbolic.
         self.qr = Some(
             Qr::try_new_with_symbolic(
                 self.symbolic
