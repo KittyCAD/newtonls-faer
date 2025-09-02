@@ -132,6 +132,8 @@ pub fn current_parallelism() -> usize {
 
 #[cfg(test)]
 mod tests {
+    use crate::solver::NormType;
+
     use super::*;
     use faer::sparse::Pair;
     use faer::sparse::SymbolicSparseColMat;
@@ -238,6 +240,7 @@ mod tests {
             &mut x,
             &mut crate::FaerLu::<f64>::default(),
             cfg,
+            NormType::LInf,
             |_| Control::Continue,
         )
         .expect("solver");

@@ -21,6 +21,12 @@ impl Default for MatrixFormat {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NormType {
+    L2,
+    LInf,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct NewtonCfg<T> {
     pub tol: T,
@@ -109,6 +115,7 @@ fn newton_iterate<M, F, Cb>(
     model: &mut M,
     x: &mut [M::Real],
     cfg: super::NewtonCfg<M::Real>,
+    norm_kind: NormType,
     mut solve_into: F,
     mut on_iter: Cb,
 ) -> SolverResult<Iterations>
@@ -133,16 +140,20 @@ where
 
     for iter in 0..cfg.max_iter {
         model.residual(x, &mut f);
-        //  TODO: Switch between inf norm and 2-norm.
-        // let res = f
-        //     .iter()
-        //     .map(|&v| v.abs())
-        //     .fold(M::Real::zero(), |a, b| if a > b { a } else { b });
-        let res = f
-            .iter()
-            .map(|&v| v * v)
-            .fold(M::Real::zero(), |a, b| a + b)
-            .sqrt();
+
+        let res;
+        if norm_kind == NormType::LInf {
+            res = f
+                .iter()
+                .map(|&v| v.abs())
+                .fold(M::Real::zero(), |a, b| if a > b { a } else { b });
+        } else {
+            res = f
+                .iter()
+                .map(|&v| v * v)
+                .fold(M::Real::zero(), |a, b| a + b)
+                .sqrt();
+        }
 
         if matches!(
             on_iter(&IterationStats {
@@ -271,15 +282,15 @@ where
 
     if use_dense {
         let mut lu = DenseLu::<M::Real>::default();
-        solve_dense_cb(model, x, &mut lu, cfg, on_iter)
+        solve_dense_cb(model, x, &mut lu, cfg, NormType::LInf, on_iter)
     } else if n_vars == n_res {
         // Square system: use LU factorisation.
         let mut lu = FaerLu::<M::Real>::default();
-        solve_sparse_cb(model, x, &mut lu, cfg, on_iter)
+        solve_sparse_cb(model, x, &mut lu, cfg, NormType::LInf, on_iter)
     } else {
         // Non-square system: use QR factorisation for least squares.
         let mut qr = SparseQr::<M::Real>::default();
-        solve_sparse_cb(model, x, &mut qr, cfg, on_iter)
+        solve_sparse_cb(model, x, &mut qr, cfg, NormType::L2, on_iter)
     }
 }
 
@@ -288,6 +299,7 @@ pub fn solve_sparse_cb<M, L, Cb>(
     x: &mut [M::Real],
     lin: &mut L,
     cfg: super::NewtonCfg<M::Real>,
+    norm_kind: NormType,
     on_iter: Cb,
 ) -> SolverResult<Iterations>
 where
@@ -305,6 +317,7 @@ where
         model,
         x,
         cfg,
+        norm_kind,
         |model, x, f, dx| {
             model.refresh_jacobian(x);
             lin.factor(&model.jacobian().attach())?;
@@ -342,6 +355,7 @@ pub fn solve_dense_cb<M, L, Cb>(
     x: &mut [M::Real],
     lu: &mut L,
     cfg: super::NewtonCfg<M::Real>,
+    norm_kind: NormType,
     on_iter: Cb,
 ) -> SolverResult<Iterations>
 where
@@ -359,6 +373,7 @@ where
         model,
         x,
         cfg,
+        norm_kind,
         |model, x, f, dx| {
             model.jacobian_dense(x, &mut jac);
             lu.factor(&jac)?;
