@@ -267,26 +267,9 @@ mod tests {
             }
         }
 
-        #[derive(Clone)]
-        struct NonSquareJc {
-            sym: SymbolicSparseColMat<usize>,
-            vals: Vec<f64>,
-        }
-        impl JacobianCache<f64> for NonSquareJc {
-            fn symbolic(&self) -> &SymbolicSparseColMat<usize> {
-                &self.sym
-            }
-            fn values(&self) -> &[f64] {
-                &self.vals
-            }
-            fn values_mut(&mut self) -> &mut [f64] {
-                &mut self.vals
-            }
-        }
-
         struct NonSquareModel {
             layout: NonSquareLayout,
-            jac: NonSquareJc,
+            jac: Jc,
         }
 
         impl NonSquareModel {
@@ -305,7 +288,7 @@ mod tests {
                 let nnz = sym.col_ptr()[sym.ncols()];
                 Self {
                     layout: NonSquareLayout,
-                    jac: NonSquareJc {
+                    jac: Jc {
                         sym,
                         vals: vec![0.0; nnz],
                     },
@@ -393,26 +376,9 @@ mod tests {
             }
         }
 
-        #[derive(Clone)]
-        struct GaussianJc {
-            sym: SymbolicSparseColMat<usize>,
-            vals: Vec<f64>,
-        }
-        impl JacobianCache<f64> for GaussianJc {
-            fn symbolic(&self) -> &SymbolicSparseColMat<usize> {
-                &self.sym
-            }
-            fn values(&self) -> &[f64] {
-                &self.vals
-            }
-            fn values_mut(&mut self) -> &mut [f64] {
-                &mut self.vals
-            }
-        }
-
         struct GaussianModel {
             layout: GaussianLayout,
-            jac: GaussianJc,
+            jac: Jc,
             data: Vec<(f64, f64)>,
         }
 
@@ -457,7 +423,7 @@ mod tests {
 
                 Self {
                     layout: GaussianLayout,
-                    jac: GaussianJc {
+                    jac: Jc {
                         sym,
                         vals: vec![0.0; nnz],
                     },
@@ -577,26 +543,9 @@ mod tests {
             }
         }
 
-        #[derive(Clone)]
-        struct SimpleJc {
-            sym: SymbolicSparseColMat<usize>,
-            vals: Vec<f64>,
-        }
-        impl JacobianCache<f64> for SimpleJc {
-            fn symbolic(&self) -> &SymbolicSparseColMat<usize> {
-                &self.sym
-            }
-            fn values(&self) -> &[f64] {
-                &self.vals
-            }
-            fn values_mut(&mut self) -> &mut [f64] {
-                &mut self.vals
-            }
-        }
-
         struct SimpleSystem {
             layout: SimpleLayout,
-            jac: SimpleJc,
+            jac: Jc,
         }
 
         impl SimpleSystem {
@@ -611,7 +560,7 @@ mod tests {
                 let nnz = sym.col_ptr()[sym.ncols()];
                 Self {
                     layout: SimpleLayout,
-                    jac: SimpleJc {
+                    jac: Jc {
                         sym,
                         vals: vec![0.0; nnz],
                     },
