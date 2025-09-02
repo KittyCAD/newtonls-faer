@@ -169,13 +169,13 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
     }
 }
 
-pub struct SparseQr<T: ComplexField<Real = T>> {
+pub struct SparseQr<T> {
     symbolic: Option<SymbolicQr<usize>>,
     qr: Option<Qr<usize, T>>,
     sig: Option<PatternSig>,
 }
 
-impl<T: ComplexField<Real = T>> Default for SparseQr<T> {
+impl<T> Default for SparseQr<T> {
     fn default() -> Self {
         Self {
             symbolic: None,
