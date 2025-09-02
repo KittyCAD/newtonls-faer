@@ -302,7 +302,6 @@ where
     let n_vars = model.layout().n_variables();
     let n_res = model.layout().n_residuals();
     let mut rhs = FaerMat::<M::Real>::zeros(n_res, 1);
-    // let mut sol = FaerMat::<M::Real>::zeros(n_vars, 1);
 
     newton_iterate(
         model,
@@ -355,10 +354,11 @@ where
     M::Real: ComplexField<Real = M::Real> + Float + Zero + One + ToPrimitive,
     Cb: FnMut(&IterationStats<M::Real>) -> Control,
 {
-    let n_vars = model.layout().n_variables();
-    let mut jac = FaerMat::<M::Real>::zeros(n_vars, n_vars);
-    let mut rhs = FaerMat::<M::Real>::zeros(n_vars, 1);
-    // let mut sol = FaerMat::<M::Real>::zeros(n_vars, 1);
+    // This system is square so we can use m and n interchangeably;
+    // n_variables == n_residuals.
+    let n = model.layout().n_variables();
+    let mut jac = FaerMat::<M::Real>::zeros(n, n);
+    let mut rhs = FaerMat::<M::Real>::zeros(n, 1);
 
     newton_iterate(
         model,
@@ -371,12 +371,6 @@ where
             for (i, &fi) in f.iter().enumerate() {
                 rhs[(i, 0)] = -fi;
             }
-
-            // rhs is n_vars x 1.
-            for (i, &fi) in f.iter().enumerate() {
-                rhs[(i, 0)] = -fi;
-            }
-
             lu.solve_in_place(rhs.as_mut())?;
 
             // Copy back to dx.
