@@ -111,6 +111,20 @@ pub enum Control {
     Cancel,
 }
 
+fn compute_residual_norm<T: Float>(f: &[T], norm_kind: NormType) -> T {
+    match norm_kind {
+        NormType::LInf => f
+            .iter()
+            .map(|&v| v.abs())
+            .fold(T::zero(), |a, b| if a > b { a } else { b }),
+        NormType::L2 => f
+            .iter()
+            .map(|&v| v * v)
+            .fold(T::zero(), |a, b| a + b)
+            .sqrt(),
+    }
+}
+
 fn newton_iterate<M, F, Cb>(
     model: &mut M,
     x: &mut [M::Real],
@@ -140,20 +154,7 @@ where
 
     for iter in 0..cfg.max_iter {
         model.residual(x, &mut f);
-
-        let res;
-        if norm_kind == NormType::LInf {
-            res = f
-                .iter()
-                .map(|&v| v.abs())
-                .fold(M::Real::zero(), |a, b| if a > b { a } else { b });
-        } else {
-            res = f
-                .iter()
-                .map(|&v| v * v)
-                .fold(M::Real::zero(), |a, b| a + b)
-                .sqrt();
-        }
+        let res = compute_residual_norm(&f, norm_kind);
 
         if matches!(
             on_iter(&IterationStats {
@@ -202,17 +203,7 @@ where
                         x_trial[i] = x[i] + alpha * dx[i];
                     }
                     model.residual(&x_trial, &mut f_trial);
-                    //  TODO: Switch between inf norm and 2-norm.
-                    // let res_try = f_trial
-                    //     .iter()
-                    //     .map(|&v| v.abs())
-                    //     .fold(M::Real::zero(), |a, b| if a > b { a } else { b });
-
-                    let res_try = f_trial
-                        .iter()
-                        .map(|&v| v * v)
-                        .fold(M::Real::zero(), |a, b| a + b)
-                        .sqrt();
+                    let res_try = compute_residual_norm(&f_trial, norm_kind);
 
                     if res_try < res {
                         x.copy_from_slice(&x_trial);
