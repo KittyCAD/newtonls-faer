@@ -113,13 +113,10 @@ pub enum Control {
 
 fn compute_residual_norm<T: Float>(f: &[T], norm_kind: NormType) -> T {
     match norm_kind {
-        NormType::LInf => f
-            .iter()
-            .map(|&v| v.abs())
-            .fold(T::zero(), |a, b| if a > b { a } else { b }),
+        NormType::LInf => f.iter().map(|&v| v.abs()).fold(T::zero(), |a, b| a.max(b)),
         NormType::L2 => f
             .iter()
-            .map(|&v| v * v)
+            .map(|&v| v.powi(2))
             .fold(T::zero(), |a, b| a + b)
             .sqrt(),
     }
