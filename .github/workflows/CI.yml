@@ -57,8 +57,9 @@ jobs:
                 components: rustfmt
   
           - uses: taiki-e/install-action@just
+          - uses: cargo-bins/cargo-binstall@main
           - name: Install deps
             run: |
-              cargo install cargo-sort typos-cli
+              cargo binstall -q --disable-strategies quick-install cargo-sort typos-cli
           - run: just fmt-check
 
