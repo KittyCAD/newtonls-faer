@@ -3,7 +3,7 @@
 mod linalg;
 mod solver;
 
-pub use linalg::{DenseLu, FaerLu, SparseQr};
+pub use linalg::{DenseLu, FaerLu};
 pub use solver::{
     Control, IterationStats, Iterations, MatrixFormat, NewtonCfg, solve, solve_cb, solve_dense_cb,
     solve_sparse_cb,
