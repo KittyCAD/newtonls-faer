@@ -414,10 +414,9 @@ mod tests {
 
                 let data: Vec<(f64, f64)> = x_vals
                     .iter()
-                    .map(|&x| {
-                        let x = x as f64;
+                    .map(|x: &f64| {
                         let y = a * (-((x - mu) / sigma).powi(2)).exp();
-                        (x, y)
+                        (*x, y)
                     })
                     .collect();
 
@@ -620,7 +619,7 @@ mod tests {
         assert!(iters > 0 && iters <= 25);
 
         // The solution should be close to [0.7071, 0.7071].
-        let expected = 0.70710678;
+        let expected = std::f64::consts::FRAC_1_SQRT_2;
         let tol = 1e-8;
         assert!(
             (x[0] - expected).abs() < tol,
