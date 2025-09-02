@@ -4,10 +4,12 @@ use error_stack::ResultExt;
 use faer::{
     Conj, Par,
     linalg::solvers::FullPivLu,
-    prelude::Solve,
+    mat::MatMut,
+    prelude::{Solve, SolveLstsq},
     sparse::{
         SparseColMatRef,
         linalg::lu::{LuRef, LuSymbolicParams, NumericLu, SymbolicLu, factorize_symbolic_lu},
+        linalg::solvers::{Qr, SymbolicQr},
     },
 };
 
@@ -143,7 +145,7 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
         Ok(())
     }
 
-    fn solve_in_place(&mut self, rhs: &mut Mat<T>) -> SolverResult<()> {
+    fn solve_in_place(&mut self, mut rhs: MatMut<T>) -> SolverResult<()> {
         let stack = MemStack::new(
             self.scratch
                 .as_mut()
@@ -151,7 +153,7 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
                 .attach_printable("Scratch buffer not available for solve")?,
         );
 
-        unsafe {
+        let lu_ref = unsafe {
             LuRef::new_unchecked(
                 self.sym
                     .as_ref()
@@ -159,9 +161,80 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
                     .attach_printable("Symbolic factorization not available for solve")?,
                 &self.num,
             )
-        }
-        .solve_in_place_with_conj(Conj::No, rhs.as_mut(), Par::rayon(0), stack);
+        };
 
+        // LU is naturally in-place.
+        lu_ref.solve_in_place_with_conj(Conj::No, rhs.as_mut(), Par::rayon(0), stack);
+        Ok(())
+    }
+}
+
+pub struct SparseQr<T> {
+    symbolic: Option<SymbolicQr<usize>>,
+    qr: Option<Qr<usize, T>>,
+    sig: Option<PatternSig>,
+}
+
+impl<T> Default for SparseQr<T> {
+    fn default() -> Self {
+        Self {
+            symbolic: None,
+            qr: None,
+            sig: None,
+        }
+    }
+}
+
+impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> for SparseQr<T> {
+    fn factor(&mut self, a: &SparseColMatRef<'_, usize, T>) -> SolverResult<()> {
+        let now = pattern_sig(a);
+
+        let need_symbolic = match self.sig {
+            None => true,
+            Some(prev) => {
+                if prev.col_ptr_ptr == now.col_ptr_ptr && prev.row_idx_ptr == now.row_idx_ptr {
+                    false
+                } else {
+                    prev != now
+                }
+            }
+        };
+
+        if need_symbolic {
+            self.symbolic = Some(
+                SymbolicQr::try_new(a.symbolic())
+                    .attach_printable("QR symbolic factorization failed")
+                    .change_context(SolverError)?,
+            );
+            self.sig = Some(now);
+        }
+
+        // Create the numeric QR factorization from a symbolic.
+        self.qr = Some(
+            Qr::try_new_with_symbolic(
+                self.symbolic
+                    .as_ref()
+                    .ok_or(SolverError)
+                    .attach_printable("Symbolic factorization not available")?
+                    .clone(),
+                *a,
+            )
+            .attach_printable("Numeric QR factorization failed")
+            .change_context(SolverError)?,
+        );
+
+        Ok(())
+    }
+
+    fn solve_in_place(&mut self, mut rhs: MatMut<T>) -> SolverResult<()> {
+        let qr = self
+            .qr
+            .as_ref()
+            .ok_or(SolverError)
+            .attach_printable("QR factorization not available for solve")?;
+
+        // Least-squares: faer writes the solution into the top ncols(A) rows of `rhs`.
+        qr.solve_lstsq_in_place(rhs.as_mut());
         Ok(())
     }
 }
@@ -182,13 +255,14 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, Mat<T>> for DenseLu<T> {
         Ok(())
     }
 
-    fn solve_in_place(&mut self, rhs: &mut Mat<T>) -> SolverResult<()> {
+    fn solve_in_place(&mut self, mut rhs: MatMut<T>) -> SolverResult<()> {
         let lu = self
             .lu
             .as_ref()
             .ok_or(SolverError)
             .attach_printable("Dense LU not factorized")?;
 
+        // FullPivLu returns a new matrix; copy the result back into `rhs` to keep in-place.
         let solution = lu.solve(rhs.as_ref());
         rhs.copy_from(&solution);
         Ok(())

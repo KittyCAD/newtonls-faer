@@ -1,7 +1,7 @@
 use super::{
     LinearSolver, Mat, NonlinearSystem, RowMap, SolverError, SolverResult, SparseColMatRef,
     init_global_parallelism,
-    linalg::{DenseLu, FaerLu},
+    linalg::{DenseLu, FaerLu, SparseQr},
 };
 use error_stack::Report;
 use faer::mat::Mat as FaerMat;
@@ -19,6 +19,12 @@ impl Default for MatrixFormat {
     fn default() -> Self {
         Self::Auto(100)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NormType {
+    L2,
+    LInf,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -105,10 +111,22 @@ pub enum Control {
     Cancel,
 }
 
+fn compute_residual_norm<T: Float>(f: &[T], norm_kind: NormType) -> T {
+    match norm_kind {
+        NormType::LInf => f.iter().map(|&v| v.abs()).fold(T::zero(), |a, b| a.max(b)),
+        NormType::L2 => f
+            .iter()
+            .map(|&v| v.powi(2))
+            .fold(T::zero(), |a, b| a + b)
+            .sqrt(),
+    }
+}
+
 fn newton_iterate<M, F, Cb>(
     model: &mut M,
     x: &mut [M::Real],
     cfg: super::NewtonCfg<M::Real>,
+    norm_kind: NormType,
     mut solve_into: F,
     mut on_iter: Cb,
 ) -> SolverResult<Iterations>
@@ -118,22 +136,22 @@ where
     F: FnMut(&mut M, &[M::Real], &[M::Real], &mut [M::Real]) -> SolverResult<()>,
     Cb: FnMut(&IterationStats<M::Real>) -> Control,
 {
-    let n = model.layout().dim();
-    let mut f = vec![M::Real::zero(); n];
-    let mut dx = vec![M::Real::zero(); n];
+    let n_vars = model.layout().n_variables();
+    let n_res = model.layout().n_residuals();
+
+    // `f` holds residuals, `dx` holds the step for the variables.
+    let mut f = vec![M::Real::zero(); n_res];
+    let mut dx = vec![M::Real::zero(); n_vars];
     let mut damping = cfg.damping;
     let mut last_res = M::Real::infinity();
 
     // buffers for line search
-    let mut x_trial = vec![M::Real::zero(); n];
-    let mut f_trial = vec![M::Real::zero(); n];
+    let mut x_trial = vec![M::Real::zero(); n_vars];
+    let mut f_trial = vec![M::Real::zero(); n_res];
 
     for iter in 0..cfg.max_iter {
         model.residual(x, &mut f);
-        let res = f
-            .iter()
-            .map(|&v| v.abs())
-            .fold(M::Real::zero(), |a, b| if a > b { a } else { b });
+        let res = compute_residual_norm(&f, norm_kind);
 
         if matches!(
             on_iter(&IterationStats {
@@ -178,14 +196,11 @@ where
                 };
 
                 for _ in 0..cfg.ls_max_steps {
-                    for i in 0..n {
+                    for i in 0..n_vars {
                         x_trial[i] = x[i] + alpha * dx[i];
                     }
                     model.residual(&x_trial, &mut f_trial);
-                    let res_try = f_trial
-                        .iter()
-                        .map(|&v| v.abs())
-                        .fold(M::Real::zero(), |a, b| if a > b { a } else { b });
+                    let res_try = compute_residual_norm(&f_trial, norm_kind);
 
                     if res_try < res {
                         x.copy_from_slice(&x_trial);
@@ -244,19 +259,26 @@ where
     M::Real: ComplexField<Real = M::Real> + Float + Zero + One + ToPrimitive,
     Cb: FnMut(&IterationStats<M::Real>) -> Control,
 {
-    let n = model.layout().dim();
+    let n_vars = model.layout().n_variables();
+    let n_res = model.layout().n_residuals();
+
     let use_dense = match cfg.format {
         super::MatrixFormat::Dense => true,
         super::MatrixFormat::Sparse => false,
-        super::MatrixFormat::Auto(threshold) => n < threshold,
+        super::MatrixFormat::Auto(threshold) => n_vars < threshold,
     };
 
     if use_dense {
         let mut lu = DenseLu::<M::Real>::default();
-        solve_dense_cb(model, x, &mut lu, cfg, on_iter)
-    } else {
+        solve_dense_cb(model, x, &mut lu, cfg, NormType::LInf, on_iter)
+    } else if n_vars == n_res {
+        // Square system: use LU factorization.
         let mut lu = FaerLu::<M::Real>::default();
-        solve_sparse_cb(model, x, &mut lu, cfg, on_iter)
+        solve_sparse_cb(model, x, &mut lu, cfg, NormType::LInf, on_iter)
+    } else {
+        // Non-square system: use QR factorization for least squares.
+        let mut qr = SparseQr::<M::Real>::default();
+        solve_sparse_cb(model, x, &mut qr, cfg, NormType::L2, on_iter)
     }
 }
 
@@ -265,6 +287,7 @@ pub fn solve_sparse_cb<M, L, Cb>(
     x: &mut [M::Real],
     lin: &mut L,
     cfg: super::NewtonCfg<M::Real>,
+    norm_kind: NormType,
     on_iter: Cb,
 ) -> SolverResult<Iterations>
 where
@@ -273,13 +296,15 @@ where
     M::Real: ComplexField<Real = M::Real> + Float + Zero + One + ToPrimitive,
     Cb: FnMut(&IterationStats<M::Real>) -> Control,
 {
-    let n = model.layout().dim();
-    let mut rhs = FaerMat::<M::Real>::zeros(n, 1);
+    let n_vars = model.layout().n_variables();
+    let n_res = model.layout().n_residuals();
+    let mut rhs = FaerMat::<M::Real>::zeros(n_res, 1);
 
     newton_iterate(
         model,
         x,
         cfg,
+        norm_kind,
         |model, x, f, dx| {
             model.refresh_jacobian(x);
             lin.factor(&model.jacobian().attach())?;
@@ -290,11 +315,22 @@ where
                 .zip(f.iter())
                 .for_each(|(dst, &src)| *dst = -src);
 
-            lin.solve_in_place(&mut rhs)?;
+            // rhs is n_residuals x 1; smash -f in there.
+            rhs.col_mut(0)
+                .as_mut()
+                .iter_mut()
+                .zip(f.iter())
+                .for_each(|(dst, &src)| *dst = -src);
 
-            for i in 0..n {
-                dx[i] = rhs[(i, 0)];
+            // In-place solve.
+            // For QR least-squares, the top n_vars rows now contain the solution.
+            lin.solve_in_place(rhs.as_mut())?;
+
+            // Chop those top rows out and copy into dx.
+            for (i, &val) in rhs.col(0).iter().take(n_vars).enumerate() {
+                dx[i] = val;
             }
+
             Ok(())
         },
         on_iter,
@@ -306,6 +342,7 @@ pub fn solve_dense_cb<M, L, Cb>(
     x: &mut [M::Real],
     lu: &mut L,
     cfg: super::NewtonCfg<M::Real>,
+    norm_kind: NormType,
     on_iter: Cb,
 ) -> SolverResult<Iterations>
 where
@@ -314,7 +351,9 @@ where
     M::Real: ComplexField<Real = M::Real> + Float + Zero + One + ToPrimitive,
     Cb: FnMut(&IterationStats<M::Real>) -> Control,
 {
-    let n = model.layout().dim();
+    // This system is square so we can use m and n interchangeably;
+    // n_variables == n_residuals.
+    let n = model.layout().n_variables();
     let mut jac = FaerMat::<M::Real>::zeros(n, n);
     let mut rhs = FaerMat::<M::Real>::zeros(n, 1);
 
@@ -322,16 +361,20 @@ where
         model,
         x,
         cfg,
+        norm_kind,
         |model, x, f, dx| {
             model.jacobian_dense(x, &mut jac);
             lu.factor(&jac)?;
             for (i, &fi) in f.iter().enumerate() {
                 rhs[(i, 0)] = -fi;
             }
-            lu.solve_in_place(&mut rhs)?;
-            for i in 0..n {
-                dx[i] = rhs[(i, 0)];
+            lu.solve_in_place(rhs.as_mut())?;
+
+            // Copy back to dx.
+            for (i, &val) in rhs.col(0).iter().enumerate() {
+                dx[i] = val;
             }
+
             Ok(())
         },
         on_iter,
