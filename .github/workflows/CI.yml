@@ -1,0 +1,65 @@
+on:
+    workflow_dispatch:
+    pull_request:
+      paths:
+        - '**.rs'
+        - .github/workflows/CI.yml
+        - Cargo.lock
+        - Cargo.toml
+        - '**/Cargo.toml'
+        - rust-toolchain.toml
+permissions: read-all
+name: Rust CI
+jobs:
+    cargo-test:
+      name: cargo test
+      runs-on: ubuntu-latest-8-cores
+      steps:
+        - uses: actions/checkout@v4
+        - name: Install Rust
+          uses: dtolnay/rust-toolchain@stable
+          with:
+            toolchain: stable
+        - uses: taiki-e/install-action@cargo-llvm-cov
+        - uses: taiki-e/install-action@nextest
+        - uses: Swatinem/rust-cache@v2.8.0
+        - uses: taiki-e/install-action@just
+
+        - name: cargo test
+          shell: bash
+          run: just test
+          env:
+            RUST_BACKTRACE: 1
+  
+    check-lint:
+      name: Check lints
+      runs-on: ubuntu-latest-8-cores
+      steps:
+        - uses: actions/checkout@v4
+        - uses: taiki-e/install-action@just
+        - name: Install Rust
+          uses: dtolnay/rust-toolchain@stable
+          with:
+            toolchain: stable
+            components: clippy
+        - uses: Swatinem/rust-cache@v2.8.0
+        - run: just lint
+
+    cargo-fmt:
+        name: Check format, typos etc.
+        runs-on: ubuntu-latest-8-cores
+        steps:
+          - uses: actions/checkout@v4
+          - name: Install Rust
+            uses: dtolnay/rust-toolchain@stable
+            with:
+                toolchain: stable
+                components: rustfmt
+  
+          - uses: taiki-e/install-action@just
+          - uses: cargo-bins/cargo-binstall@main
+          - name: Install deps
+            run: |
+              cargo binstall -q --disable-strategies quick-install cargo-sort typos-cli
+          - run: just fmt-check
+

@@ -125,7 +125,7 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
             self.sig = Some(now);
         }
 
-        let mut stack = MemStack::new(
+        let stack = MemStack::new(
             self.scratch
                 .as_mut()
                 .ok_or(SolverError)
@@ -136,7 +136,7 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
             .as_ref()
             .ok_or(SolverError)
             .attach_printable("Symbolic factorization not available")?
-            .factorize_numeric_lu(&mut self.num, *a, par, &mut stack, Default::default())
+            .factorize_numeric_lu(&mut self.num, *a, par, stack, Default::default())
             .attach_printable("Numeric LU factorization failed")
             .change_context(SolverError)?;
 
@@ -144,7 +144,7 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
     }
 
     fn solve_in_place(&mut self, rhs: &mut Mat<T>) -> SolverResult<()> {
-        let mut stack = MemStack::new(
+        let stack = MemStack::new(
             self.scratch
                 .as_mut()
                 .ok_or(SolverError)
@@ -160,7 +160,7 @@ impl<T: ComplexField<Real = T>> LinearSolver<T, SparseColMatRef<'_, usize, T>> f
                 &self.num,
             )
         }
-        .solve_in_place_with_conj(Conj::No, rhs.as_mut(), Par::rayon(0), &mut stack);
+        .solve_in_place_with_conj(Conj::No, rhs.as_mut(), Par::rayon(0), stack);
 
         Ok(())
     }
